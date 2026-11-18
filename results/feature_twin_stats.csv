@@ -1,0 +1,3 @@
+partition,points_true_and_twin_both_candidates,median_abs_dist_diff_m,points_with_valid_heading,pct_true_higher_cos_heading,pct_true_higher_progress_ratio,pct_true_higher_on_both
+train,128713,0.0,120316,96.03,96.03,96.03
+student_test,14440,0.0,13437,94.74,94.74,94.74
