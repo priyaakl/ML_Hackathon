@@ -1,6 +1,6 @@
 {
   "transition_scale_m": 30.0,
   "max_network_distance_m": 250.0,
-  "disconnected_penalty": 4.0,
+  "disconnected_penalty": 8.0,
   "gap_reset_s": 30.0
 }

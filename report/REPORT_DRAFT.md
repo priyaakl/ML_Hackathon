@@ -148,28 +148,30 @@ _(The professor's list is numbered 1, 2, 5, 6, 7, 8, 9. Questions 3 and 4 were n
 4. **Missing candidates and GPS gaps.** An observation with no candidates carries the previous decoded arc forward, when available. Leading missing observations use `-1`. A gap over 30 seconds between observations with candidates starts a new sequence, so Viterbi does not score a transition across the gap. Of the 90 development trips, 23 had gaps over 60 seconds. The longest was 153,064 seconds (about 42.5 hours) on trip `00000090`. Sources [eda_summary.csv](../results/eda_summary.csv) and [dataset_inventory.csv](../results/dataset_inventory.csv).
 5. **Disconnected segments.** Of the 90 development trips, 89 had road networks with multiple weakly connected components. If two candidates are in different components, or no directed path exists within the search limit, the decoder applies a finite penalty and can still return a route. The search limit has a 250 m upper bound. Source [eda_summary.csv](../results/eda_summary.csv).
 
-LightGBM fold classifiers used the family, features, and hyperparameters of the published model. We grouped the 80 training trips into 5 folds. For each of eight trips sampled by trip length, we generated classifier probabilities using a model fitted on the other four folds. We searched transition scales of 15, 30, and 60 m and disconnected-transition penalties of 4 and 8. Pooled top-1 selected the configuration, with mean continuity as a tiebreaker. The selected scale was 30 m and the penalty was 4. It scored 97.51% across 19,095 valid tuning observations. This is the score used for parameter selection. The student-test trips were held out of tuning, and the evaluator split was outside this workflow. Sources [hmm_tuning_summary.csv](../results/hmm_tuning_summary.csv) and [hmm_tuning_metadata.json](../results/hmm_tuning_metadata.json).
+We refitted LightGBM with the feature list and tuned hyperparameters from the published 16:44 model. We grouped the 80 training trips into 5 folds. For each of eight trips sampled by trip length, we generated classifier probabilities using a model fitted on the other four folds. We searched transition scales of 15, 30, and 60 m and disconnected-transition penalties of 4 and 8. Pooled top-1 selected the configuration, with mean continuity as a tiebreaker. The selected scale was 30 m and the penalty was 8. It scored 97.53% across 19,095 valid tuning observations. This is the score used for parameter selection. These settings match the original Viterbi defaults. The student-test trips were held out of tuning, and the evaluator split was outside this workflow. Sources [hmm_tuning_summary.csv](../results/hmm_tuning_summary.csv) and [hmm_tuning_metadata.json](../results/hmm_tuning_metadata.json).
 
-### Student-test comparison with LightGBM
+### Student-test comparison with tuned LightGBM
 
-We used the saved LightGBM scorer published in commit `d3d9747`. The three methods used the same scores across the 10 student-test trips, with 19,133 valid reference assignments out of 19,160 GPS observations.
+We used the saved tuned LightGBM scorer trained at 16:44 and published in commit `d1e216b`. The three methods used the same scores across the 10 student-test trips, with 19,133 valid reference assignments out of 19,160 GPS observations. Person 2’s classifier evaluation recorded candidate-level log loss of 0.0668. Source [experiments.csv](../results/experiments.csv).
 
 | Method | Top-1 accuracy | Macro F1 (arc-level) | Route continuity | Sequence similarity |
 |---|---:|---:|---:|---:|
-| LightGBM | 90.11% | 83.17% | 95.72% | 70.10% |
-| LightGBM + default Viterbi | 93.10% | 91.64% | 99.37% | 90.25% |
-| LightGBM + retuned Viterbi | 92.89% | 91.67% | 99.30% | 90.31% |
+| Tuned LightGBM | 90.75% | 85.31% | 96.24% | 73.34% |
+| Tuned LightGBM + default Viterbi | 93.31% | 92.60% | 99.43% | 90.73% |
+| Tuned LightGBM + retuned Viterbi | 93.31% | 92.60% | 99.43% | 90.73% |
 
 Top-1 pools matches across valid GPS observations. Arc-level macro F1 averages F1 across road segments within each trip, then averages the trip scores. Route continuity measures repeated arcs or directed connections within two steps. Sequence similarity is one minus normalized edit distance after collapsing consecutive duplicate arc IDs. Continuity and sequence similarity are averaged across trips. Source [hmm_student_test_summary.csv](../results/hmm_student_test_summary.csv).
 
-Retuned Viterbi raised pooled student-test top-1 by 2.78 percentage points over LightGBM alone, with gains on all 10 trips. Default Viterbi retained a 0.21-percentage-point advantage in student-test top-1. Source [hmm_student_test_by_trip.csv](../results/hmm_student_test_by_trip.csv).
+Viterbi raised pooled student-test Top-1 by 2.56 percentage points over tuned LightGBM alone, with gains on all 10 trips. The default and training-selected settings produced identical evaluation scores. Source [hmm_student_test_by_trip.csv](../results/hmm_student_test_by_trip.csv).
+
+The local FastAPI batch evaluator processed the same 10 student-test trips with the tuned model and updated decoder configuration. Its per-trip metrics agree with the comparison after rounding. The table uses exact match counts for pooled Top-1. The API batch console computes pooled Top-1 from rounded per-trip scores. Source [api_eval_student_test.csv](../results/api_eval_student_test.csv).
 
 
 ---
 
 ## 6. Geographical Visualisation Using Folium *(Person 3)*
 
-The LightGBM map with retuned Viterbi for student-test trip `00000065` shows raw GPS points in blue, nearby roads in grey, the reference route in green, and the Viterbi prediction in dashed orange. The interactive Folium map includes layer controls and zoom. The figure below is a static export of the same four layers. The reference layer is included for this report figure. The evaluator UI receives the predicted route and aggregate metrics.
+The tuned LightGBM map with retuned Viterbi for student-test trip `00000065` shows raw GPS points in blue, nearby roads in grey, the reference route in green, and the Viterbi prediction in dashed orange. The interactive Folium map includes layer controls and zoom. The figure below is a static export of the same four layers. The reference layer is included for this report figure. The evaluator UI receives the predicted route and aggregate metrics.
 
 ![Road network, reference route, GPS observations and Viterbi prediction for student-test trip 00000065](figures/hmm_student_test_00000065.png)
 
