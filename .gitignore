@@ -29,3 +29,5 @@ Student folder/
 
 data/processed/candidates_*.parquet
 data/processed/observations_*.parquet
+
+results/maps/
