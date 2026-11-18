@@ -93,28 +93,37 @@ _(The professor's list is numbered 1, 2, 5, 6, 7, 8, 9. Questions 3 and 4 were n
 
 ## 5. HMM and Viterbi Route Reconstruction *(Person 3)*
 
-1. Hidden states: _TODO_
-2. Emission probabilities: _TODO_
-3. Transition probabilities: _TODO_
-4. Missing candidates and large GPS gaps: _TODO_
-5. Disconnected consecutive segments: _TODO_
-6. Did HMM decoding improve the route? (with evidence): _TODO_
+1. **Hidden states.** A state is a candidate directed road segment for one GPS observation. Person 1's pipeline supplies up to 20 candidates within 40 m.
+2. **Emission score.** The decoder uses the log of the classifier's probability for each GPS–road pair.
+3. **Transition score.** It compares the straight-line movement between GPS readings with directed road-network distance from a bounded Dijkstra search. A larger mismatch receives a larger penalty. Viterbi combines both scores across observations and traces back the best sequence.
+4. **Missing candidates and GPS gaps.** An observation with no candidates carries the previous decoded arc forward, when available. The first missing observations use `-1`. A GPS gap over 30 seconds starts a new sequence.
+5. **Disconnected segments.** If the search fails to find a route within its cap, the decoder applies a finite penalty. The network search is capped at 250 m.
 
-Classifier-only vs classifier + HMM (student_test, final model). Source: `results/api_eval_student_test.csv` (`python -m src.api.evaluator`) and/or Person 3's comparison script.
+We compared transition scales of 15, 30, and 60 m and disconnected-transition penalties of 4 and 8 on eight training trips. The best pooled training accuracy came from 60 m and a penalty of 4. The deployed decoder configuration records these training-selected settings. The classifier was fitted on these training trips. Source [hmm_tuning_summary.csv](../results/hmm_tuning_summary.csv).
 
-| | Top-1 accuracy | Macro F1 (arc-level) | Route continuity |
-|---|---|---|---|
-| Classifier-only | | | |
-| Classifier + HMM/Viterbi | | | |
+### Student-test comparison
 
-Cases where the HMM did not help: _TODO_
+The classifier was the logistic-regression model supplied with this project snapshot. The three methods used identical candidate scores across ten student-test trips, with 19,133 valid reference assignments out of 19,160 GPS observations.
+
+| Method | Top-1 accuracy | Macro F1 (arc-level) | Route continuity | Sequence similarity |
+|---|---:|---:|---:|---:|
+| Classifier only | 86.60% | 77.96% | 95.30% | 65.27% |
+| Classifier + default Viterbi | 88.84% | 85.50% | 99.12% | 85.43% |
+| Classifier + training-tuned Viterbi | 88.52% | 84.97% | 98.74% | 82.59% |
+
+Top-1 pools matches across valid GPS observations. Arc-level macro F1 averages F1 across road segments within each trip, then averages the trip scores. Route continuity measures repeated arcs or directed connections within two steps. Sequence similarity is one minus normalized edit distance after collapsing consecutive duplicate arc IDs. Continuity and sequence similarity are averaged across trips. Source [hmm_student_test_summary.csv](../results/hmm_student_test_summary.csv).
+
+Training-tuned Viterbi improved pointwise accuracy on nine of ten trips compared with classifier-only matching. The original Viterbi settings scored slightly higher overall on student test. On trip `00000007`, tuned decoding improved continuity from 99.70% to 100.00% while pointwise accuracy fell from 88.48% to 85.52%. It repaired four classifier misses and introduced 44 wrong assignments. Source [hmm_student_test_by_trip.csv](../results/hmm_student_test_by_trip.csv).
 
 ---
 
 ## 6. Geographical Visualisation Using Folium *(Person 3)*
 
-- [ ] At least one map screenshot showing original GPS, nearby road network, reference route and predicted route (legend, layer control, sensible zoom)
-- [ ] Interactive HTML or the code that generates it (`src/viz/folium_maps.py`) in the repository
+The map for student-test trip `00000065` shows raw GPS points in blue, nearby roads in grey, the reference route in green, and the Viterbi prediction in dashed orange. The interactive Folium map includes layer controls and zoom. The figure below is a static export of the same four layers. The reference layer is included for this report figure. The evaluator UI receives the predicted route and aggregate metrics.
+
+![Road network, reference route, GPS observations and Viterbi prediction for student-test trip 00000065](figures/hmm_student_test_00000065.png)
+
+The interactive file is generated under `results/maps/` by running `python -m src.hmm.compare --map-trip 00000065` with the student dataset configured. Map generation is implemented in `src/viz/folium_maps.py`.
 
 ---
 

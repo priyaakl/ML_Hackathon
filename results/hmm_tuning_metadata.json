@@ -1,0 +1,20 @@
+{
+  "model_sha256": "ed688d632ab5048428f95b2cf49113778b942ad81692ce17fbb201a6c75fa724",
+  "feature_columns_sha256": "56ed1b57ec28d2b79e9b52c52fc9f64363614b382197e89821c4e616649659ab",
+  "candidate_settings": {
+    "radius_m": 40,
+    "max_candidates": 20
+  },
+  "partition": "train",
+  "trip_ids": [
+    "00000050",
+    "00000024",
+    "00000085",
+    "00000036",
+    "00000097",
+    "00000055",
+    "00000062",
+    "00000042"
+  ],
+  "selection_metric": "pointwise accuracy, then mean two-hop continuity"
+}
