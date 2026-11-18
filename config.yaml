@@ -21,7 +21,7 @@ api:
   eval_trips_dir: "~/Downloads/Student folder/student_test"
   # true = use the plan's placeholder scorer/decoder (Section 5.3 stub) until P2/P3 deliver.
   # Mock results are for testing the app only and are labelled "MOCK" in every API response.
-  use_mock_scorer: true
+  use_mock_scorer: false
   use_mock_decoder: false
 
 ui:
