@@ -29,3 +29,4 @@ Student folder/
 
 data/processed/candidates_*.parquet
 data/processed/observations_*.parquet
+results/api_eval_MOCK_*.csv

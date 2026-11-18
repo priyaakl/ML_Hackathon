@@ -3,7 +3,7 @@
 Endpoints
     GET  /health    is the server alive? which scorer/decoder is loaded?
     GET  /trips     the trip ids the evaluator can choose from
-    POST /predict   body {"trip_id": "..."}  -> predicted route + timing (+ metrics, once evaluator.py is added)
+    POST /predict   body {"trip_id": "..."}  -> predicted route + timing + evaluation metrics
 
 Start it from the repo root (host and port come from config.yaml):
     python -m src.api.main
@@ -19,6 +19,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+from src.api.evaluator import Evaluator
 from src.api.pipeline import PathSnapPipeline
 from src.common.config import load_config
 
@@ -76,7 +77,7 @@ class PredictResponse(BaseModel):
     gps: list[list[float]]              # [[lat, lon], ...] one per GPS point
     route_geometry: list[list[float]]   # [[lat, lon], ...] predicted route polyline
     timing: Timing
-    metrics: Optional[dict] = None      # filled in by src/api/evaluator.py (next step)
+    metrics: Optional[dict] = None      # summary numbers from src/api/evaluator.py (never raw ground truth)
     request_s: float                    # wall-clock time of the whole request on the server
 
 
@@ -89,6 +90,7 @@ async def lifespan(app: FastAPI):
     pipe = PathSnapPipeline(CFG)
     n = pipe.warm_up()                       # builds every trip's road graph now
     app.state.pipeline = pipe
+    app.state.evaluator = Evaluator(pipe)    # ground truth stays here, server-side
     app.state.startup_s = round(time.perf_counter() - t0, 3)
     mode = pipe.mode()
     log.info("PathSnap API ready in %.2fs | %d trips in %s", app.state.startup_s, n, pipe.trips_dir)
@@ -157,12 +159,22 @@ def predict(body: PredictRequest, request: Request):
         log.exception("PREDICT trip=%s -> failed", trip_id)
         raise HTTPException(status_code=500, detail=f"Prediction failed for trip {trip_id}: {e}")
 
-    result["metrics"] = None              # evaluator.py plugs in here in the next step
+    # Evaluation happens AFTER prediction, using ground truth that never left the server.
+    # If it fails, the route is still returned and the error is reported in `metrics`.
+    try:
+        result["metrics"] = request.app.state.evaluator.evaluate(
+            trip_id, result["predicted_arcs"], result["classifier_only_arcs"])
+    except Exception as e:
+        log.exception("EVALUATE trip=%s -> failed", trip_id)
+        result["metrics"] = {"available": False, "reason": f"evaluation failed: {e}"}
+
     result["request_s"] = round(time.perf_counter() - t0, 3)
-    t = result["timing"]
-    log.info("PREDICT trip=%s | obs=%d | cands=%d | candidates %.3fs, scoring %.3fs, decoding %.3fs | total %.3fs%s",
+    t, m = result["timing"], result["metrics"]
+    score = (f"top1 HMM {m['hmm']['top1_accuracy']} vs clf {m['classifier_only']['top1_accuracy']}"
+             if m.get("available") else "no metrics")
+    log.info("PREDICT trip=%s | obs=%d | cands=%d | candidates %.3fs, scoring %.3fs, decoding %.3fs | %s | total %.3fs%s",
              trip_id, result["n_observations"], result["n_candidate_rows"], t["candidates_s"], t["scoring_s"],
-             t["decoding_s"], result["request_s"], " | MOCK" if result["mode"]["is_mock"] else "")
+             t["decoding_s"], score, result["request_s"], " | MOCK" if result["mode"]["is_mock"] else "")
     return result
 
 
