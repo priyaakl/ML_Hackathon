@@ -6,6 +6,7 @@ then run python -m src.hmm.compare --tune --map-trip 00000065.
 
 import argparse
 import json
+from copy import copy
 from hashlib import sha256
 from itertools import groupby, product
 from time import perf_counter
@@ -13,6 +14,7 @@ from time import perf_counter
 import numpy as np
 import pandas as pd
 from sklearn.metrics import f1_score
+from sklearn.model_selection import GroupKFold
 from tqdm import tqdm
 
 from src.api.pipeline import classifier_only_arcs
@@ -21,6 +23,7 @@ from src.common.io import load_trip
 from src.data.candidates import build_candidates_for_trip
 from src.hmm.graph import build_graph
 from src.hmm.viterbi import decode_trip
+from src.models.model_zoo import build_model
 from src.models.scorer import CandidateScorer
 
 
@@ -74,8 +77,33 @@ def load_inputs(cfg, scorer, partition, trip_id, labels):
     return trip_dir, cands, probs, graph, len(obs), reference, valid
 
 
-def tune_decoder(cfg, scorer, trip_ids, labels):
-    """Grid search on up to eight trips spaced across training-trip lengths."""
+def training_rows(cfg, trip_ids, labels, features):
+    """Rebuild the classifier's labelled training rows with current candidate settings."""
+    frames = []
+    for trip_id in tqdm(trip_ids, desc="Building training candidates for fold models"):
+        reference = labels.get_group(trip_id)
+        reference = reference.loc[reference["label_valid"], ["obs_idx", "ref_arc_id"]]
+        if reference.empty:
+            continue
+        candidates, _ = build_candidates_for_trip(
+            cfg["paths"]["data_root"] / "train" / trip_id,
+            radius_m=cfg["candidates"]["radius_m"],
+            max_candidates=cfg["candidates"]["max_candidates"],
+        )
+        rows = candidates[["trip_id", "obs_idx", "cand_arc_id", *features]].merge(
+            reference, on="obs_idx", validate="many_to_one",
+        )
+        rows["label"] = (rows["cand_arc_id"] == rows["ref_arc_id"]).astype(np.int8)
+        frames.append(rows[["trip_id", *features, "label"]])
+    if not frames:
+        raise ValueError("No training trips have valid reference labels.")
+    return pd.concat(frames, ignore_index=True)
+
+
+def tune_decoder(cfg, scorer, trip_ids, labels, model_meta):
+    """Grid search on out-of-fold classifier scores from up to eight training trips."""
+    if model_meta["feature_columns"] != scorer.feature_columns:
+        raise ValueError("Saved model metadata and scorer feature columns disagree.")
     training = labels.size().reindex(trip_ids)
     if not len(training) or training.isna().any():
         raise ValueError("Every training trip must have aligned labels.")
@@ -87,25 +115,45 @@ def tune_decoder(cfg, scorer, trip_ids, labels):
         {**DEFAULTS, "transition_scale_m": scale, "disconnected_penalty": penalty}
         for scale, penalty in product((15.0, 30.0, 60.0), (4.0, 8.0))
     ]
+    trip_ids = np.asarray(trip_ids)
+    n_splits = min(5, len(trip_ids))
+    if n_splits < 2:
+        raise ValueError("Out-of-fold tuning needs at least two training trips.")
+    features = scorer.feature_columns
+    train = training_rows(cfg, trip_ids, labels, features)
     rows = []
-    with tqdm(total=len(selected) * len(settings), desc="Decoder tuning (training only)") as progress:
-        for trip_id in selected:
-            _, cands, probs, graph, n_obs, reference, valid = load_inputs(
-                cfg, scorer, "train", trip_id, labels
+    folds = GroupKFold(n_splits=n_splits).split(trip_ids, groups=trip_ids)
+    with tqdm(total=len(selected) * len(settings), desc="Decoder tuning (out-of-fold)") as progress:
+        for fold, (fit_idx, holdout_idx) in enumerate(folds, start=1):
+            holdout_ids = trip_ids[holdout_idx]
+            to_score = selected[np.isin(selected, holdout_ids)]
+            if not len(to_score):
+                continue
+            fit = train.loc[train["trip_id"].isin(trip_ids[fit_idx])]
+            fold_scorer = copy(scorer)
+            fold_scorer.model = build_model(
+                model_meta["model"], model_meta["seed"], model_meta["config"],
             )
-            for params in settings:
-                start = perf_counter()
-                prediction = decode_trip(cands, probs, graph, {**params, "n_observations": n_obs})
-                elapsed = perf_counter() - start
-                rows.append({
-                    "trip_id": trip_id,
-                    **params,
-                    "n_valid": int(valid.sum()),
-                    "correct": int(np.count_nonzero(np.asarray(prediction)[valid] == reference[valid])),
-                    "continuity": graph.route_continuity(prediction, max_hops=2),
-                    "decode_s": elapsed,
-                })
-                progress.update()
+            fold_scorer.model.fit(fit[features], fit["label"])
+            for trip_id in to_score:
+                _, cands, probs, graph, n_obs, reference, valid = load_inputs(
+                    cfg, fold_scorer, "train", trip_id, labels
+                )
+                for params in settings:
+                    start = perf_counter()
+                    prediction = decode_trip(cands, probs, graph, {**params, "n_observations": n_obs})
+                    elapsed = perf_counter() - start
+                    rows.append({
+                        "trip_id": trip_id,
+                        "holdout_fold": fold,
+                        "fit_trip_count": len(fit_idx),
+                        **params,
+                        "n_valid": int(valid.sum()),
+                        "correct": int(np.count_nonzero(np.asarray(prediction)[valid] == reference[valid])),
+                        "continuity": graph.route_continuity(prediction, max_hops=2),
+                        "decode_s": elapsed,
+                    })
+                    progress.update()
     trials = pd.DataFrame(rows)
     ranked = trials.groupby(list(DEFAULTS), as_index=False).agg(
         correct=("correct", "sum"), n_valid=("n_valid", "sum"),
@@ -198,7 +246,10 @@ def main():
     config_path = ROOT / "models" / "hmm_config.json"
     if args.tune:
         labels = pd.read_parquet(processed / "labels_train.parquet").groupby("trip_id")
-        params, trials, ranked, selected = tune_decoder(cfg, scorer, splits["train"], labels)
+        model_meta = json.loads((ROOT / "models" / "final_model_meta.json").read_text())
+        params, trials, ranked, selected = tune_decoder(
+            cfg, scorer, splits["train"], labels, model_meta,
+        )
         config_path.write_text(json.dumps(params, indent=2) + "\n")
         trials.to_csv(results / "hmm_tuning_by_trip.csv", index=False)
         ranked.to_csv(results / "hmm_tuning_summary.csv", index=False)
@@ -207,6 +258,9 @@ def main():
             "feature_columns_sha256": sha256(features.read_bytes()).hexdigest(),
             "candidate_settings": cfg["candidates"],
             "partition": "train",
+            "scorer": model_meta["model"],
+            "probability_source": "out-of-fold, grouped by trip",
+            "classifier_folds": min(5, len(splits["train"])),
             "trip_ids": selected,
             "selection_metric": "pointwise accuracy, then mean two-hop continuity",
         }, indent=2) + "\n")

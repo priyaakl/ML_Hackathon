@@ -1,43 +1,27 @@
-# PathSnap route reconstruction results
+# PathSnap route reconstruction with LightGBM
 
-## Method
+For the decoder and gap-handling details, see [Sections 5 and 6 of the team report](REPORT_DRAFT.md#5-hmm-and-viterbi-route-reconstruction-person-3).
 
-The decoder gives each GPS observation one candidate road arc as its hidden state. It uses the log of the classifier probability as the emission score. The transition penalty compares directed network distance with observed GPS displacement. The road graph uses limited Dijkstra search between arc midpoints. For consecutive observations assigned to the same arc, the decoder allows motion up to that arc's length. If the search cannot connect two candidates within the distance cap, the decoder applies a fixed penalty. Viterbi keeps the best preceding state for each candidate and traces backward to recover the route. It starts a new sequence after a gap over 30 seconds. Missing observations carry the last decoded arc forward, with `-1` used when there is no preceding prediction.
+## Training-only decoder tuning
 
-Person 1's code generated candidate arcs within 40 m, capped at 20 per observation. The logistic-regression artifact in the updated project snapshot supplied probabilities for the same candidate rows in all three comparisons. The classifier artifact has the same SHA-256 as the earlier model used for training-only tuning. We reran the student-test comparison on the updated snapshot. The experiment used scikit-learn 1.9.1, matching the saved model.
+LightGBM fold classifiers used the family, features, and hyperparameters of the published model. We grouped the 80 training trips into 5 folds. For each of eight trips sampled by trip length, we generated classifier probabilities using a model fitted on the other four folds. We searched transition scales of 15, 30, and 60 m and disconnected-transition penalties of 4 and 8. Pooled top-1 selected the configuration, with mean continuity as a tiebreaker. The selected scale was 30 m and the penalty was 4. It scored 97.51% across 19,095 valid tuning observations. This is the score used for parameter selection. The student-test trips were held out of tuning, and the evaluator split was outside this workflow. Sources [hmm_tuning_summary.csv](../results/hmm_tuning_summary.csv) and [hmm_tuning_metadata.json](../results/hmm_tuning_metadata.json).
 
-## Decoder tuning
+## Student-test comparison
 
-We fixed the maximum network search distance at 250 m and the gap reset threshold at 30 s. We searched transition scales of 15, 30, and 60 m and disconnected-transition penalties of 4 and 8 across eight training trips sampled by trip length. We selected by pooled pointwise accuracy, with mean continuity as a tiebreaker. The resulting settings are 60 m and penalty 4. On the training subset they scored 96.50%, versus 95.89% for the original defaults. The classifier had been fit on these training trips, so the tuning scores are in-sample for the classifier.
-
-## Student-test results
-
-Both methods used the same GPS data, candidates, and model scores. The reference labels were used only for measurement. The ten trips contained 19,160 observations, of which 19,133 had a valid aligned reference label.
+We used the saved LightGBM scorer published in commit `d3d9747`. The three methods used the same scores across the 10 student-test trips, with 19,133 valid reference assignments out of 19,160 GPS observations.
 
 | Method | Top-1 accuracy | Macro F1 (arc-level) | Route continuity | Sequence similarity |
 |---|---:|---:|---:|---:|
-| Classifier only | 86.60% | 77.96% | 95.30% | 65.27% |
-| Classifier + default Viterbi | 88.84% | 85.50% | 99.12% | 85.43% |
-| Classifier + training-tuned Viterbi | 88.52% | 84.97% | 98.74% | 82.59% |
+| LightGBM | 90.11% | 83.17% | 95.72% | 70.10% |
+| LightGBM + default Viterbi | 93.10% | 91.64% | 99.37% | 90.25% |
+| LightGBM + retuned Viterbi | 92.89% | 91.67% | 99.30% | 90.31% |
 
-Pointwise accuracy pools correct road assignments across valid observations. Arc-level macro F1 is computed per trip and averaged across trips. Sequence similarity is one minus normalized Levenshtein distance after collapsing successive duplicate arcs in each valid-observation sequence. Continuity is the proportion of adjacent predictions that repeat an arc or can connect within two directed arc steps. Sequence and continuity figures are means across trips.
+Top-1 pools matches across valid GPS observations. Arc-level macro F1 averages F1 across road segments within each trip, then averages the trip scores. Route continuity measures repeated arcs or directed connections within two steps. Sequence similarity is one minus normalized edit distance after collapsing consecutive duplicate arc IDs. Continuity and sequence similarity are averaged across trips. Source [hmm_student_test_summary.csv](../results/hmm_student_test_summary.csv).
 
-Training-tuned Viterbi recovered a net 367 correct point assignments and improved accuracy on nine of ten trips relative to classifier-only matching. The original defaults scored 0.32 percentage points higher than the training-tuned settings on student test. The configuration file records the training-selected settings, which were fixed before the formal student-test comparison.
+Retuned Viterbi raised pooled student-test top-1 by 2.78 percentage points over LightGBM alone, with gains on all 10 trips. Default Viterbi retained a 0.21-percentage-point advantage in student-test top-1. Source [hmm_student_test_by_trip.csv](../results/hmm_student_test_by_trip.csv).
 
-Trip `00000007` shows a trade-off. Training-tuned Viterbi increased continuity from 99.70% to 100.00% and sequence similarity from 65.38% to 96.75%. Pointwise accuracy fell from 88.48% to 85.52%. Viterbi fixed four classifier errors but changed 44 previously correct observations, including a nine-observation run assigned to arc 282 instead of the aligned reference arc 285. A smoother route can still assign individual observations to the wrong segment.
+![Student-test route reconstructed with LightGBM + Viterbi](figures/hmm_student_test_00000065.png)
 
-![Training-tuned Viterbi on student-test trip 00000065](figures/hmm_student_test_00000065.png)
+## Reproduce
 
-On trip `00000065`, training-tuned Viterbi improved accuracy from 83.85% to 86.33% and continuity from 95.31% to 99.35%. The image overlays the GPS observations, nearby roads, reference route and decoded arcs. The evaluator UI receives the predicted route and summary metrics.
-
-## Reproduction and API handoff
-
-Use the extracted student dataset and Person 2’s model artifacts. From the repository root:
-
-```bash
-PATHSNAP_DATA="/path/to/Student folder" python -m src.hmm.compare --tune --map-trip 00000065
-```
-
-On PowerShell, set `$env:PATHSNAP_DATA` first and run `python -m src.hmm.compare --tune --map-trip 00000065`. Omit `--tune` to re-evaluate the saved configuration. The script saves tuning trials, aggregate results, and per-trip results in `results/`. If Person 2 replaces the classifier, rerun the evaluation and tuning with the new artifact before using the results in the final report.
-
-FastAPI already reads `models/hmm_config.json`. Person 4 can set both `api.use_mock_scorer` and `api.use_mock_decoder` to `false` and point `PATHSNAP_EVAL_DIR` at the supplied student-test folder to repeat the development smoke test. The local FastAPI test also used the API from the updated project snapshot. It returned successful prediction responses with one arc per observation, drawable route segments, and metrics for all ten student-test trips. The two-laptop UI and reserved evaluator trips remain for the team’s deployment test.
+From the repository root, set `PATHSNAP_DATA` to the folder containing `train/` and `student_test/`. Run `python -m src.hmm.compare --tune --map-trip 00000065`. Omit `--tune` to reuse the existing HMM config. The earlier logistic-regression run was a baseline. The results here apply to the LightGBM artifact recorded in the tuning metadata.
