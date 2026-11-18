@@ -1,0 +1,31 @@
+# Data and ML
+numpy
+pandas
+scipy
+scikit-learn
+lightgbm
+xgboost
+optuna
+joblib
+pyarrow
+
+# Geospatial and road graph
+pyproj
+shapely
+networkx
+
+# Visualisation
+matplotlib
+seaborn
+folium
+
+# API and UI
+fastapi
+uvicorn
+requests
+streamlit
+streamlit-folium
+
+# Utilities
+pyyaml
+tqdm
