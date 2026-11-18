@@ -6,6 +6,7 @@ Run from the repo root (after labels.py and candidates.py have been run):
 Writes into results/figures/ (PNG) and results/ (CSV):
     eda_summary.csv        one row per partition: counts, missing values, gaps, route jumps, network facts
     eda_network.csv        one row per trip: nodes, arcs, two-way share, connected components
+    eda_gps_jumps_isolated.csv  one row per trip: GPS speed jumps and isolated road-network nodes
     fig_trip_lengths.png   GPS points per trip
     fig_time_gaps.png      distribution of time between consecutive GPS points + trips with long gaps
     fig_speed.png          vehicle speed distribution (from observations_*.parquet)
@@ -26,10 +27,14 @@ from tqdm import tqdm
 
 from src.common.config import load_config
 from src.common.io import load_trip
+from src.common.geo import trip_origin, project
 
 PARTS = ["train", "student_test"]
 COLORS = {"train": "#215cb5", "student_test": "#e08a1e"}
 BAD_TRIP_PCT = 25.0                       # same rule as labels.py
+JUMP_SPEED_MPS = 50.0                     # a step implying > 50 m/s (180 km/h) counts as a GPS speed jump (our choice, not tuned)
+JUMP_MAX_DT_S = 60.0                      # only steps up to 60 s apart are judged; longer ones are time gaps, handled separately
+BIG_STEP_M, BIG_STEP_DT_S = 200.0, 5.0    # "teleport" check: a step over 200 m within 5 s
 
 
 def _save(fig, path):
@@ -57,6 +62,35 @@ def network_stats(root, splits):
             pct_arcs_two_way=round(float(two_way.mean()) * 100, 1),
             n_components=int(n_weak), largest_component_pct=round(float(sizes.max() / n) * 100, 1),
             missing_values=int(d["track"].isna().sum().sum() + nd.isna().sum().sum() + ar.isna().sum().sum()),
+        ))
+    return pd.DataFrame(rows)
+
+
+def track_quality(root, splits):
+    """One row per trip: GPS speed jumps (from the projected track) and isolated road-network nodes
+    (nodes that no arc starts or ends at). Isolated nodes are different from disconnected components."""
+    rows = []
+    jobs = [(p, t) for p in PARTS for t in splits[p]]
+    for part, tid in tqdm(jobs, desc="gps jumps / isolated nodes"):
+        d = load_trip(root / part / tid, with_route=False)
+        tr = d["track"]
+        lon0, lat0 = trip_origin(tr)
+        P = project(tr["lon"], tr["lat"], lon0, lat0)
+        t = tr["t"].to_numpy(dtype=np.float64)
+        step, dt = np.linalg.norm(np.diff(P, axis=0), axis=1), np.diff(t)
+        ok = (dt > 0) & (dt <= JUMP_MAX_DT_S)
+        speed = np.where(ok, step / np.where(dt > 0, dt, 1.0), 0.0)
+        n_nodes = len(d["nodes"])
+        used = np.zeros(n_nodes, dtype=bool)
+        used[d["arcs"]["u"].to_numpy()] = True
+        used[d["arcs"]["v"].to_numpy()] = True
+        rows.append(dict(
+            partition=part, trip_id=tid, n_steps=len(step),
+            n_jump_gt50mps=int((speed > JUMP_SPEED_MPS).sum()),
+            n_jump_gt200m_1s=int(((step > BIG_STEP_M) & (dt <= BIG_STEP_DT_S)).sum()),
+            max_speed_mps=float(speed.max()) if len(speed) else 0.0,
+            max_step_m=float(step[ok].max()) if ok.any() else 0.0,
+            n_nodes=n_nodes, isolated_nodes=int((~used).sum()),
         ))
     return pd.DataFrame(rows)
 
@@ -161,6 +195,8 @@ def main():
     print("Network statistics ...")
     net = network_stats(root, splits)
     net.to_csv(res / "eda_network.csv", index=False)
+    tq = track_quality(root, splits)
+    tq.to_csv(res / "eda_gps_jumps_isolated.csv", index=False)
     print("Time gaps ...")
     dts = gap_table(root, splits)
 
@@ -168,6 +204,7 @@ def main():
     rows = []
     for p in PARTS:
         i, n, d = inv[inv.partition == p], net[net.partition == p], dts[dts.partition == p].dt
+        q = tq[tq.partition == p]
         rows.append(dict(
             partition=p, trips=len(i), gps_points=int(i.n_obs.sum()), median_points_per_trip=float(i.n_obs.median()),
             missing_values=int(n.missing_values.sum()), non_monotonic_time_trips=int((~i.time_monotonic).sum()),
@@ -178,6 +215,8 @@ def main():
             median_pct_arcs_two_way=float(n.pct_arcs_two_way.median()),
             trips_with_disconnected_network=int((n.n_components > 1).sum()),
             median_largest_component_pct=float(n.largest_component_pct.median()),
+            gps_speed_jumps_gt50mps=int(q.n_jump_gt50mps.sum()), trips_with_speed_jumps=int((q.n_jump_gt50mps > 0).sum()),
+            steps_gt200m_within5s=int(q.n_jump_gt200m_1s.sum()), isolated_nodes=int(q.isolated_nodes.sum()),
         ))
     summ = pd.DataFrame(rows)
     summ.to_csv(res / "eda_summary.csv", index=False)
