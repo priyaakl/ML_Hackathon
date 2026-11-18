@@ -1,0 +1,16 @@
+{
+  "objective": "top1",
+  "n_trials": 30,
+  "cv_folds": 5,
+  "best_value": 0.8924522551355757,
+  "best_params": {
+    "n_estimators": 600,
+    "learning_rate": 0.07574197048187549,
+    "num_leaves": 57,
+    "min_child_samples": 60,
+    "subsample": 0.8564110609891884,
+    "colsample_bytree": 0.894056267608378,
+    "reg_lambda": 0.05481393949868432
+  },
+  "total_compute_min": 32.5
+}
