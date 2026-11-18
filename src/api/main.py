@@ -76,6 +76,7 @@ class PredictResponse(BaseModel):
     classifier_only_arcs: list[int]
     gps: list[list[float]]              # [[lat, lon], ...] one per GPS point
     route_geometry: list[list[float]]   # [[lat, lon], ...] predicted route polyline
+    route_segments: list[list[list[float]]]  # one [[lat, lon], [lat, lon]] per predicted arc (for the map)
     timing: Timing
     metrics: Optional[dict] = None      # summary numbers from src/api/evaluator.py (never raw ground truth)
     request_s: float                    # wall-clock time of the whole request on the server

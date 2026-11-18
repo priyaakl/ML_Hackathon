@@ -74,6 +74,17 @@ def route_geometry(graph, arcs: list) -> list:
     return coords
 
 
+def route_segments(graph, arcs: list) -> list:
+    """One [[lat, lon], [lat, lon]] segment per distinct predicted arc, in travel order.
+    The UI draws each arc separately, so a gap between two arcs is never drawn as an
+    invented straight road (same approach as Person 3's folium_maps._route_geometry)."""
+    segments = []
+    for arc in dict.fromkeys(int(a) for a in arcs if a >= 0):
+        (lon1, lat1), (lon2, lat2) = graph.arc_geometry(arc)
+        segments.append([[float(lat1), float(lon1)], [float(lat2), float(lon2)]])
+    return segments
+
+
 # ----------------------------------------------------------------------------------------------
 # The pipeline: created ONCE when the API starts, then reused for every request
 # ----------------------------------------------------------------------------------------------
@@ -193,6 +204,7 @@ class PathSnapPipeline:
             "classifier_only_arcs": clf_arcs,
             "gps": obs[["lat", "lon"]].to_numpy(dtype=float).tolist(),
             "route_geometry": route_geometry(graph, hmm_arcs),
+            "route_segments": route_segments(graph, hmm_arcs),
             "timing": {
                 "load_graph_s": round(t1 - t0, 3),
                 "candidates_s": round(t2 - t1, 3),
