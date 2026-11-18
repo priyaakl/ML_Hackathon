@@ -1,0 +1,32 @@
+{
+  "model": "lr",
+  "config": {
+    "C": 1.0,
+    "max_iter": 1000
+  },
+  "seed": 42,
+  "n_train_rows": 1326757,
+  "trained": "2026-11-18T12:07:50",
+  "feature_columns": [
+    "dist_to_arc_m",
+    "dist_minus_best_m",
+    "dist_rank",
+    "n_cands",
+    "arc_len_m",
+    "offset_along_m",
+    "dist_to_arc_end_m",
+    "arc_has_reverse",
+    "arc_in_deg",
+    "arc_out_deg",
+    "heading_valid",
+    "heading_diff_deg",
+    "cos_heading",
+    "speed_mps",
+    "progress_m",
+    "progress_ratio",
+    "dist_prev_m",
+    "dist_next_m",
+    "dt_prev_s",
+    "dt_next_s"
+  ]
+}
