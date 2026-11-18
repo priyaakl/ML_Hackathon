@@ -1,0 +1,12 @@
+seed: 42
+
+paths:
+  # Dataset lives OUTSIDE the repo. Set this to the folder that contains train/ and student_test/.
+  # You can also override it without editing this file:  export PATHSNAP_DATA="/full/path/Student folder"
+  data_root: "~/Downloads/Student folder"
+  processed: "data/processed"
+  results: "results"
+
+candidates:
+  radius_m: 40          # keep every arc within this distance of the GPS point
+  max_candidates: 20    # safety cap per GPS point (nearest first)
