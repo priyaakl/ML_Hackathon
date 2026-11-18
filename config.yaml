@@ -10,3 +10,21 @@ paths:
 candidates:
   radius_m: 40          # keep every arc within this distance of the GPS point
   max_candidates: 20    # safety cap per GPS point (nearest first)
+
+api:
+  host: "0.0.0.0"       # listen on all network interfaces, so Laptop 2 can reach Laptop 1
+  port: 8000
+  cors_origins: ["*"]   # allow the UI to call the API from any address on the local network
+  # Folder holding the trips the evaluator can pick. For now: student_test (for testing).
+  # At the demo, point this at the evaluator trips folder, or override with:
+  #   export PATHSNAP_EVAL_DIR="/full/path/to/evaluator_trips"
+  eval_trips_dir: "~/Downloads/Student folder/student_test"
+  # true = use the plan's placeholder scorer/decoder (Section 5.3 stub) until P2/P3 deliver.
+  # Mock results are for testing the app only and are labelled "MOCK" in every API response.
+  use_mock_scorer: true
+  use_mock_decoder: true
+
+ui:
+  # Where the UI sends requests. Change it to Laptop 1's IP for the two-laptop demo,
+  # or override with:  export PATHSNAP_API_URL="http://<laptop1-ip>:8000"
+  api_base_url: "http://127.0.0.1:8000"
