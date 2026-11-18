@@ -32,3 +32,4 @@ data/processed/observations_*.parquet
 results/api_eval_MOCK_*.csv
 
 results/maps/
+evaluator_test/
