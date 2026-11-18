@@ -26,3 +26,6 @@ Student folder/
 
 # ---------- Logs ----------
 *.log
+
+data/processed/candidates_*.parquet
+data/processed/observations_*.parquet
