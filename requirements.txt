@@ -1,31 +1,31 @@
 # Data and ML
-numpy
-pandas
-scipy
-scikit-learn
-lightgbm
-xgboost
-optuna
-joblib
-pyarrow
+numpy==2.4.6
+pandas==3.1.1
+scipy==1.17.1
+scikit-learn==1.9.1
+lightgbm==4.7.0
+xgboost==3.2.0
+optuna==5.1.0
+joblib==1.6.0
+pyarrow==26.0.1
 
 # Geospatial and road graph
-pyproj
-shapely
-networkx
+pyproj==3.7.2
+shapely==2.2.0
+networkx==3.6.1
 
 # Visualisation
-matplotlib
-seaborn
-folium
+matplotlib==3.11.2
+seaborn==0.13.2
+folium==1.0.0
 
 # API and UI
-fastapi
-uvicorn
-requests
-streamlit
-streamlit-folium
+fastapi==0.163.2
+uvicorn==0.54.0
+requests==2.34.2
+streamlit==1.67.0
+streamlit-folium==0.27.4
 
 # Utilities
-pyyaml
-tqdm
+pyyaml==6.0.3
+tqdm==4.70.1

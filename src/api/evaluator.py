@@ -113,6 +113,10 @@ def evaluate_all(save: bool = True) -> pd.DataFrame:
     print(df.to_string(index=False))
     if "hmm_top1" in df:
         print("\nMEAN over trips:", df.drop(columns=["trip_id"]).mean(numeric_only=True).round(4).to_dict())
+        # Pooled = every scored GPS point counts equally (comparable with Person 2's harness top1_all).
+        w = df["scored_obs"]
+        print("POOLED over GPS points: hmm_top1 =", round(float((df.hmm_top1 * w).sum() / w.sum()), 4),
+              "| clf_top1 =", round(float((df.clf_top1 * w).sum() / w.sum()), 4))
     if save:
         tag = "MOCK_" if mode["is_mock"] else ""
         out = ROOT / "results" / f"api_eval_{tag}{pipe.trips_dir.name}.csv"

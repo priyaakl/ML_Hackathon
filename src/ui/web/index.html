@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PathSnap · GPS map-matching</title>
+<link rel="stylesheet" href="vendor/leaflet/leaflet.css">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%230b1220'/%3E%3Cpath d='M6 23 C11 23 10 10 16 10 S21 21 26 9' stroke='%23818cf8' stroke-width='3.4' fill='none' stroke-linecap='round'/%3E%3C/svg%3E">
+<style>
+  @font-face {
+    font-family: "Manrope"; font-weight: 200 800; font-display: swap;
+    src: url("vendor/fonts/manrope-latin-wght-normal.woff2") format("woff2-variations");
+  }
+  :root {
+    --night: #0b1220;                      /* map background / deepest layer */
+    --glass: rgba(15, 23, 39, .92);        /* floating panels */
+    --glass-hi: rgba(255, 255, 255, .05);
+    --line: rgba(148, 163, 196, .16);
+    --text: #e7ecf5;
+    --muted: #8d98ae;
+    --faint: #5b6680;
+    --accent: #818cf8;                     /* the one accent: predicted route, selection, primary data */
+    --accent-strong: #6366f1;              /* primary button */
+    --start: #34d399;                      /* route start marker */
+    --end: #fb7185;                        /* route end marker */
+    --ok: #34d399;
+    --warn: #fbbf24;
+    --bad: #fb7185;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--night); }
+  body {
+    font-family: "Manrope", ui-sans-serif, system-ui, sans-serif;
+    font-feature-settings: "tnum" 1, "cv11" 1;
+    color: var(--text); -webkit-font-smoothing: antialiased; font-weight: 500;
+    overflow: hidden;
+  }
+  button, input { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* ---------------------------------------------------------------- map (full bleed) */
+  #map { position: fixed; inset: 0; background: var(--night); }
+  /* Standard OpenStreetMap tiles, re-tinted into a night map so the route stands out. */
+  .leaflet-tile-pane { filter: invert(1) hue-rotate(195deg) brightness(.78) contrast(.92) saturate(.35); }
+  .leaflet-container { font-family: inherit; }
+  .leaflet-control-zoom { border: 1px solid var(--line) !important; border-radius: 12px !important; overflow: hidden; }
+  .leaflet-control-zoom a { background: var(--glass) !important; color: var(--text) !important; border-color: var(--line) !important; backdrop-filter: blur(14px); }
+  .leaflet-control-attribution { background: rgba(11,18,32,.6) !important; color: var(--faint) !important; }
+  .leaflet-control-attribution a { color: var(--muted) !important; }
+  .leaflet-tooltip { background: var(--glass); color: var(--text); border: 1px solid var(--line); border-radius: 8px; box-shadow: none; backdrop-filter: blur(10px); }
+  .leaflet-tooltip::before { display: none; }
+
+  .glass {
+    background: var(--glass);
+    backdrop-filter: blur(18px) saturate(1.2); -webkit-backdrop-filter: blur(18px) saturate(1.2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: 0 8px 24px -12px rgba(0,0,0,.5);
+  }
+
+  /* ---------------------------------------------------------------- left panel */
+  .panel {
+    position: fixed; z-index: 1000; top: 16px; left: 16px; bottom: 16px; width: 384px;
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel-scroll { overflow-y: auto; padding: 22px 22px 18px; display: flex; flex-direction: column; gap: 22px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+  .brand { display: flex; gap: 12px; align-items: center; }
+  .brand svg { flex: none; }
+  .brand h1 { margin: 0; font-size: 1.32rem; font-weight: 800; letter-spacing: -.02em; }
+  .brand p { margin: 1px 0 0; color: var(--muted); font-size: .84rem; }
+
+  .section-title { font-size: .86rem; font-weight: 700; color: var(--muted); margin: 0 0 10px; display: flex; justify-content: space-between; align-items: center; }
+  .section-title span:last-child { font-weight: 500; color: var(--faint); }
+
+  .trips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  .trip {
+    position: relative; text-align: left; cursor: pointer;
+    padding: 10px 12px; border-radius: 12px;
+    background: var(--glass-hi); border: 1px solid var(--line);
+    transition: border-color .15s, background .15s;
+  }
+  .trip:hover { border-color: rgba(148,163,196,.34); }
+  .trip[aria-pressed="true"] {
+    background: rgba(129,140,248,.12);
+    border-color: var(--accent);
+  }
+  .trip .id { font-weight: 700; font-size: .95rem; letter-spacing: .01em; }
+  .trip .sub { display: block; font-size: .76rem; color: var(--faint); margin-top: 1px; }
+  .trip .sub.scored { color: var(--ok); }
+  .placeholder { color: var(--faint); font-size: .88rem; line-height: 1.5; grid-column: 1 / -1; }
+
+  .go {
+    width: 100%; border: 0; cursor: pointer; border-radius: 14px; padding: 14px 18px;
+    font-weight: 700; font-size: 1rem; color: #ffffff;
+    background: var(--accent-strong);
+    display: flex; align-items: center; justify-content: center; gap: 10px;
+    transition: transform .12s, filter .15s;
+  }
+  .go:hover:not(:disabled) { filter: brightness(1.08); }
+  .go:active:not(:disabled) { transform: translateY(1px); }
+  .go:disabled { cursor: not-allowed; background: rgba(148,163,196,.18); color: var(--faint); }
+  .go.busy { cursor: progress; background: var(--accent-strong); color: #fff; }
+  .spinner { width: 16px; height: 16px; border-radius: 50%; border: 2.5px solid rgba(255,255,255,.3); border-top-color: #ffffff; animation: spin .7s linear infinite; display: none; }
+  .go.busy .spinner { display: block; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .hint { margin: 8px 2px 0; font-size: .82rem; color: var(--muted); min-height: 1.2em; }
+  .error { margin-top: 10px; padding: 10px 12px; border-radius: 12px; font-size: .86rem; line-height: 1.45;
+           background: rgba(251,113,133,.1); border: 1px solid rgba(251,113,133,.35); color: #ffd1d9; display: none; }
+  .error.on { display: block; }
+
+  /* results */
+  .results { display: none; flex-direction: column; gap: 20px; }
+  .results.on { display: flex; }
+  .score-row { display: grid; grid-template-columns: 128px 1fr; gap: 16px; align-items: center; }
+  .gauge { position: relative; width: 128px; height: 128px; }
+  .gauge svg { transform: rotate(-90deg); }
+  .gauge .val { position: absolute; inset: 0; display: grid; place-items: center; text-align: center; }
+  .gauge .val b { display: block; font-size: 1.42rem; font-weight: 800; letter-spacing: -.03em; line-height: 1; }
+  .gauge .val small { display: block; color: var(--muted); font-size: .72rem; margin-top: 3px; }
+  .gauge circle.arc { transition: stroke-dashoffset 1s cubic-bezier(.2,.8,.2,1); }
+  .mini { display: grid; gap: 10px; }
+  .mini div { display: flex; justify-content: space-between; align-items: baseline; padding-bottom: 8px; border-bottom: 1px solid var(--line); font-size: .86rem; color: var(--muted); }
+  .mini div:last-child { border-bottom: 0; padding-bottom: 0; }
+  .mini b { color: var(--text); font-size: 1.08rem; font-weight: 700; }
+
+  .cmp { display: grid; gap: 14px; }
+  .cmp-head { display: flex; justify-content: space-between; font-size: .86rem; margin-bottom: 7px; }
+  .cmp-head .delta { font-weight: 700; color: var(--ok); }
+  .cmp-head .delta.neg { color: var(--bad); }
+  .bar { display: grid; grid-template-columns: 1fr 52px; align-items: center; gap: 10px; font-size: .8rem; color: var(--muted); }
+  .bar + .bar { margin-top: 5px; }
+  .track { display: block; height: 7px; border-radius: 99px; background: rgba(148,163,196,.12); overflow: hidden; }
+  .fill { display: block; height: 100%; border-radius: 99px; width: 0; transition: width .9s cubic-bezier(.2,.8,.2,1); }
+  .fill.hmm { background: var(--accent); }
+  .fill.clf { background: rgba(148,163,196,.45); }
+  .bar .v { text-align: right; color: var(--text); font-weight: 600; }
+  .key { display: flex; gap: 16px; font-size: .78rem; color: var(--muted); }
+  .key i { display: inline-block; width: 18px; height: 6px; border-radius: 99px; margin-right: 6px; vertical-align: middle; }
+  .note { margin: 0; font-size: .78rem; color: var(--faint); line-height: 1.5; }
+
+  .timing { display: flex; height: 8px; border-radius: 99px; overflow: hidden; background: rgba(148,163,196,.12); gap: 2px; }
+  .timing span { height: 100%; }
+  .tlegend { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; margin-top: 10px; font-size: .82rem; color: var(--muted); }
+  .tlegend i { display: inline-block; width: 8px; height: 8px; border-radius: 3px; margin-right: 8px; }
+  .tlegend .n { text-align: right; color: var(--text); font-weight: 600; }
+  .tlegend .total { grid-column: 1 / -1; display: flex; justify-content: space-between; padding-top: 8px; margin-top: 2px; border-top: 1px solid var(--line); color: var(--text); font-weight: 700; }
+
+  .conn { border-top: 1px solid var(--line); padding: 14px 22px 16px; }
+  .conn summary { cursor: pointer; font-size: .82rem; color: var(--muted); list-style: none; }
+  .conn summary::-webkit-details-marker { display: none; }
+  .conn summary::after { content: " +"; color: var(--faint); }
+  .conn[open] summary::after { content: " −"; }
+  .conn .row { display: flex; gap: 8px; margin-top: 10px; }
+  .conn input { flex: 1; min-width: 0; background: rgba(0,0,0,.25); border: 1px solid var(--line); border-radius: 10px; padding: 9px 11px; font-size: .86rem; }
+  .conn button { border: 1px solid var(--line); background: var(--glass-hi); border-radius: 10px; padding: 0 14px; font-weight: 700; font-size: .86rem; cursor: pointer; }
+  .conn .detail { margin-top: 10px; font-size: .78rem; color: var(--faint); line-height: 1.55; }
+  .conn .detail b { color: var(--muted); font-weight: 600; }
+
+  /* ---------------------------------------------------------------- top-right: status + activity */
+  .top-right { position: fixed; z-index: 1000; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 10px; width: 320px; }
+  .status { display: inline-flex; align-items: center; gap: 9px; padding: 9px 14px; border-radius: 99px; font-size: .84rem; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 0 4px rgba(52,211,153,.18); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 0 4px rgba(251,113,133,.18); }
+  .activity { width: 100%; padding: 12px 14px; }
+  .activity h3 { margin: 0 0 8px; font-size: .78rem; color: var(--muted); font-weight: 700; display: flex; justify-content: space-between; }
+  .activity h3 span { font-weight: 500; color: var(--faint); }
+  .log { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; font-size: .78rem; }
+  .log li { display: grid; grid-template-columns: 38px 1fr auto; gap: 8px; align-items: center; color: var(--muted); }
+  .log .m { font-weight: 700; font-size: .7rem; color: var(--faint); }
+  .log .c { font-weight: 700; padding: 1px 7px; border-radius: 99px; font-size: .72rem; background: rgba(52,211,153,.14); color: var(--ok); }
+  .log .c.err { background: rgba(251,113,133,.14); color: var(--bad); }
+  .log .t { color: var(--faint); margin-left: 6px; }
+  .log .empty { grid-template-columns: 1fr; color: var(--faint); }
+
+  /* ---------------------------------------------------------------- map overlays */
+  .mock {
+    position: fixed; z-index: 1000; top: 16px; left: 50%; transform: translateX(-50%);
+    margin-left: 200px; /* centre over the visible map, right of the panel */
+    display: none; align-items: center; gap: 10px; padding: 9px 16px; border-radius: 99px;
+    background: rgba(251,191,36,.14); border: 1px solid rgba(251,191,36,.5); color: #fde68a;
+    font-size: .84rem; font-weight: 600; backdrop-filter: blur(14px);
+  }
+  .mock.on { display: inline-flex; }
+  .legend {
+    position: fixed; z-index: 1000; bottom: 16px; left: 416px; padding: 10px 14px;
+    display: flex; gap: 18px; align-items: center; font-size: .8rem; color: var(--muted);
+  }
+  .legend .route-key { width: 32px; height: 5px; border-radius: 99px; background: var(--accent); }
+  .legend .end-key { width: 9px; height: 9px; border-radius: 50%; }
+  .legend .gps-key { width: 8px; height: 8px; border-radius: 50%; background: #dbe3f0; opacity: .8; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; }
+  .trip-chip { padding: 6px 12px; border-radius: 99px; background: rgba(129,140,248,.14); color: var(--text); font-weight: 700; display: none; }
+  .trip-chip.on { display: inline-block; }
+  .legend .trip-chip:not(.on) { display: none; }
+  .empty-state {
+    position: fixed; z-index: 900; top: 50%; left: calc(50% + 200px); transform: translate(-50%, -50%);
+    text-align: center; color: var(--muted); max-width: 320px; pointer-events: none;
+  }
+  .empty-state b { display: block; color: var(--text); font-size: 1.15rem; margin-bottom: 6px; }
+  .empty-state.off { display: none; }
+
+  @media (max-width: 900px) {
+    body { overflow: auto; display: flex; flex-direction: column; }
+    .mock { order: 0; } .panel { order: 1; } .top-right { order: 2; } #map { order: 3; } .legend { order: 4; } .empty-state { display: none; }
+    .panel { position: relative; inset: auto; width: auto; margin: 12px; max-height: none; }
+    #map { position: relative; height: 70vh; margin: 0 12px 12px; border-radius: var(--radius); overflow: hidden; }
+    .top-right { position: relative; top: auto; right: auto; width: auto; margin: 0 12px 12px; align-items: stretch; }
+    .legend, .mock, .empty-state { position: static; transform: none; margin: 0 12px 12px; left: auto; }
+    .mock.on { display: flex; }
+  }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+
+<div id="map" aria-label="Map of the matched route"></div>
+
+<div class="empty-state" id="empty-state">
+  <b>Pick a trip to see its route</b>
+  The predicted road route will be drawn here over the raw GPS points.
+</div>
+
+<div class="mock" id="mock" role="status">Mock scorer active: these scores test the app, not the real model</div>
+
+<!-- ============================================================ left panel -->
+<aside class="panel glass" aria-label="PathSnap controls">
+  <div class="panel-scroll" id="panel-scroll">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 32 32" aria-hidden="true">
+        <rect width="32" height="32" rx="9" fill="rgba(255,255,255,.06)" stroke="rgba(148,163,196,.2)"/>
+        <path d="M6 23 C11 23 10 10 16 10 S21 21 26 9" stroke="#818cf8" stroke-width="3" fill="none" stroke-linecap="round"/>
+        <circle cx="6" cy="23" r="2.2" fill="#34d399"/><circle cx="26" cy="9" r="2.2" fill="#fb7185"/>
+      </svg>
+      <div>
+        <h1>PathSnap</h1>
+        <p>Matching noisy GPS to the road network</p>
+      </div>
+    </div>
+
+    <section>
+      <h2 class="section-title"><span>Evaluation trips</span><span id="trip-count"></span></h2>
+      <div class="trips" id="trips" role="group" aria-label="Trips">
+        <p class="placeholder">Connecting to the backend…</p>
+      </div>
+    </section>
+
+    <section>
+      <button class="go" id="go" disabled><span class="spinner" aria-hidden="true"></span><span id="go-label">Match route</span></button>
+      <p class="hint" id="hint" aria-live="polite"></p>
+      <div class="error" id="error" role="alert"></div>
+    </section>
+
+    <section class="results" id="results" aria-live="polite">
+      <div class="score-row">
+        <div class="gauge" aria-hidden="true">
+          <svg width="128" height="128" viewBox="0 0 116 116">
+            <circle cx="58" cy="58" r="50" fill="none" stroke="rgba(148,163,196,.12)" stroke-width="8"/>
+            <circle class="arc" id="gauge-arc" cx="58" cy="58" r="50" fill="none" stroke="#818cf8" stroke-width="8" stroke-linecap="round" stroke-dasharray="314.16" stroke-dashoffset="314.16"/>
+          </svg>
+          <div class="val"><div><b id="g-top1">–</b><small>Top-1</small></div></div>
+        </div>
+        <div class="mini">
+          <div><span>Macro F1 (arc-level)</span><b id="g-f1">–</b></div>
+          <div><span>Route continuity</span><b id="g-cont">–</b></div>
+          <div><span>GPS points</span><b id="g-n">–</b></div>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="section-title"><span>HMM + Viterbi vs classifier only</span></h2>
+        <div class="cmp" id="cmp"></div>
+        <div class="key" style="margin-top:12px">
+          <span><i style="background:#818cf8"></i>HMM + Viterbi</span>
+          <span><i style="background:rgba(148,163,196,.45)"></i>Classifier only</span>
+        </div>
+      </div>
+
+      <div>
+        <h2 class="section-title"><span>Processing time on Laptop 1</span></h2>
+        <div class="timing" id="timing"></div>
+        <div class="tlegend" id="tlegend"></div>
+      </div>
+
+      <p class="note" id="note"></p>
+    </section>
+  </div>
+
+  <details class="conn">
+    <summary id="conn-summary">Backend address</summary>
+    <div class="row">
+      <input id="api-url" type="url" spellcheck="false" aria-label="Backend API address">
+      <button id="connect">Connect</button>
+    </div>
+    <div class="detail" id="conn-detail"></div>
+  </details>
+</aside>
+
+<!-- ============================================================ top right -->
+<div class="top-right">
+  <div class="status glass" id="status"><span class="dot" id="dot"></span><span id="status-text">Connecting…</span></div>
+  <div class="activity glass" aria-label="Requests sent to the API">
+    <h3>API requests from this page <span>live</span></h3>
+    <ul class="log" id="log"><li class="empty">No requests yet</li></ul>
+  </div>
+</div>
+
+<!-- ============================================================ legend -->
+<div class="legend glass" aria-hidden="true">
+  <span class="trip-chip" id="trip-chip"></span>
+  <span><i class="route-key"></i>Predicted route</span>
+  <span><i class="end-key" style="background:#34d399"></i>Start</span>
+  <span><i class="end-key" style="background:#fb7185"></i>End</span>
+  <span><i class="gps-key"></i>Raw GPS points</span>
+</div>
+
+<script src="vendor/leaflet/leaflet.js"></script>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let API = "";
+let selected = null;
+const scored = {};                         // trip_id -> Top-1 shown on its button after a match
+
+/* ================================================================ map */
+const map = L.map("map", { zoomControl: false, preferCanvas: true, attributionControl: true }).setView([30, 10], 3);
+L.control.zoom({ position: "bottomright" }).addTo(map);
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+  maxZoom: 19, attribution: "&copy; OpenStreetMap contributors",
+}).addTo(map);
+map.createPane("route").style.zIndex = 420;
+map.createPane("gps").style.zIndex = 440;
+const routeCanvas = L.canvas({ pane: "route", padding: 0.4 });
+const gpsCanvas = L.canvas({ pane: "gps", padding: 0.4 });
+const routeLayer = L.layerGroup().addTo(map);
+const gpsLayer = L.layerGroup().addTo(map);
+let anim = null;
+
+
+function drawRoute(res) {
+  if (anim) cancelAnimationFrame(anim);
+  routeLayer.clearLayers(); gpsLayer.clearLayers();
+  const gps = res.gps, segs = res.route_segments;
+
+  gps.forEach((p, i) => L.circleMarker(p, {
+    renderer: gpsCanvas, radius: 2.1, stroke: false, fillColor: "#dbe3f0", fillOpacity: 0.5,
+  }).bindTooltip(`GPS point ${i + 1}`).addTo(gpsLayer));
+  map.fitBounds(L.latLngBounds(gps), { paddingTopLeft: [430, 90], paddingBottomRight: [60, 90] });
+
+  const lines = segs.map((s, i) => L.polyline(s, {
+    renderer: routeCanvas, color: "#818cf8",
+    weight: 5, opacity: 1, lineCap: "round", lineJoin: "round",
+  }));
+  const ends = segs.length ? [
+    L.circleMarker(segs[0][0], { renderer: routeCanvas, radius: 7, color: "#0b1220", weight: 3, fillColor: "#34d399", fillOpacity: 1 }).bindTooltip("Start"),
+    L.circleMarker(segs[segs.length - 1][1], { renderer: routeCanvas, radius: 7, color: "#0b1220", weight: 3, fillColor: "#fb7185", fillOpacity: 1 }).bindTooltip("End"),
+  ] : [];
+
+  if (reduceMotion || lines.length < 2) {
+    lines.forEach((l) => l.addTo(routeLayer)); ends.forEach((e) => e.addTo(routeLayer));
+    return;
+  }
+  // The one animated moment: the route draws itself in travel order.
+  if (ends[0]) ends[0].addTo(routeLayer);
+  const t0 = performance.now(), dur = Math.min(1800, 500 + lines.length * 2);
+  let shown = 0;
+  const step = (now) => {
+    const target = Math.round(lines.length * Math.min(1, (now - t0) / dur));
+    for (; shown < target; shown++) lines[shown].addTo(routeLayer);
+    if (shown < lines.length) anim = requestAnimationFrame(step);
+    else if (ends[1]) ends[1].addTo(routeLayer);
+  };
+  anim = requestAnimationFrame(step);
+}
+
+/* ================================================================ API (every call is logged top-right) */
+async function call(method, path, body) {
+  const t0 = performance.now();
+  let status = "—";
+  try {
+    const r = await fetch(API.replace(/\/$/, "") + path, {
+      method, headers: body ? { "Content-Type": "application/json" } : {},
+      body: body ? JSON.stringify(body) : undefined,
+    });
+    status = r.status;
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || `The API answered with status ${r.status}`);
+    return data;
+  } finally {
+    logCall(method, path, status, performance.now() - t0);
+  }
+}
+
+function logCall(method, path, status, ms) {
+  const log = $("log");
+  if (log.querySelector(".empty")) log.innerHTML = "";
+  const ok = typeof status === "number" && status < 400;
+  const li = document.createElement("li");
+  li.innerHTML = `<span class="m">${method}</span>
+    <span>${path}<span class="t">${ms >= 1000 ? (ms / 1000).toFixed(2) + " s" : Math.round(ms) + " ms"}</span></span>
+    <span class="c ${ok ? "" : "err"}">${status === "—" ? "failed" : status}</span>`;
+  log.prepend(li);
+  while (log.children.length > 6) log.lastChild.remove();
+}
+
+/* ================================================================ connect */
+async function connect() {
+  API = $("api-url").value.trim();
+  try { localStorage.setItem("pathsnap_api", API); } catch (e) { /* storage unavailable */ }
+  $("dot").className = "dot"; $("status-text").textContent = "Connecting…";
+  try {
+    const h = await call("GET", "/health");
+    $("dot").className = "dot ok";
+    $("status-text").textContent = `Backend connected`;
+    $("conn-summary").textContent = `Backend address: ${API}`;
+    $("conn-detail").innerHTML = `<b>Scorer</b> ${esc(h.mode.scorer)}<br><b>Decoder</b> ${esc(h.mode.decoder)}<br><b>Decoder settings</b> ${esc(h.mode.decoder_params)}`;
+    $("mock").classList.toggle("on", h.mode.is_mock);
+    const t = await call("GET", "/trips");
+    renderTrips(t.trips);
+  } catch (e) {
+    $("dot").className = "dot bad";
+    $("status-text").textContent = "Backend unreachable";
+    $("trips").innerHTML = `<p class="placeholder">Can't reach the backend at ${esc(API)}. Check that it is running on Laptop 1 with host 0.0.0.0, that both laptops are on the same network, and that the firewall allows port 8000. Then fix the address below and press Connect.</p>`;
+    $("trip-count").textContent = "";
+    document.querySelector(".conn").open = true;
+    $("go").disabled = true;
+  }
+}
+
+function renderTrips(ids) {
+  const box = $("trips");
+  box.innerHTML = "";
+  $("trip-count").textContent = `${ids.length} available`;
+  ids.forEach((id) => {
+    const b = document.createElement("button");
+    b.className = "trip"; b.type = "button"; b.dataset.id = id;
+    b.setAttribute("aria-pressed", "false");
+    b.innerHTML = `<span class="id">${id}</span><span class="sub ${scored[id] ? "scored" : ""}">${scored[id] ? "Top-1 " + scored[id] : "Not matched yet"}</span>`;
+    b.addEventListener("click", () => select(id));
+    box.appendChild(b);
+  });
+  if (ids.length) select(selected && ids.includes(selected) ? selected : ids[0]);
+  $("go").disabled = !ids.length;
+}
+
+function select(id) {
+  selected = id;
+  document.querySelectorAll(".trip").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.id === id)));
+}
+
+/* ================================================================ match */
+async function matchRoute() {
+  if (!selected) return;
+  const tripId = selected;
+  const go = $("go");
+  go.disabled = true; go.classList.add("busy"); $("go-label").textContent = "Matching…";
+  $("error").classList.remove("on");
+  const t0 = performance.now();
+  const tick = setInterval(() => {
+    $("hint").textContent = `Laptop 1 is matching trip ${tripId}: ${((performance.now() - t0) / 1000).toFixed(1)} s`;
+  }, 100);
+  try {
+    const res = await call("POST", "/predict", { trip_id: tripId });
+    showResult(res);
+    $("hint").textContent = "";
+  } catch (e) {
+    $("hint").textContent = "";
+    $("error").textContent = `Matching trip ${tripId} failed: ${e.message}`;
+    $("error").classList.add("on");
+  } finally {
+    clearInterval(tick);
+    go.disabled = false; go.classList.remove("busy"); $("go-label").textContent = "Match route";
+  }
+}
+
+const pct = (x) => (x === null || x === undefined ? "n/a" : (x * 100).toFixed(1) + "%");
+
+function showResult(res) {
+  $("empty-state").classList.add("off");
+  $("mock").classList.toggle("on", res.mode.is_mock);
+  $("trip-chip").textContent = `Trip ${res.trip_id}`; $("trip-chip").classList.add("on");
+  drawRoute(res);
+
+  const m = res.metrics || {};
+  $("g-n").textContent = res.n_observations.toLocaleString();
+  const arc = $("gauge-arc"), C = 314.16;
+  if (m.available) {
+    const h = m.hmm, c = m.classifier_only;
+    $("g-top1").textContent = pct(h.top1_accuracy);
+    $("g-f1").textContent = pct(h.macro_f1);
+    $("g-cont").textContent = pct(h.route_continuity);
+    arc.style.strokeDashoffset = C;
+    requestAnimationFrame(() => requestAnimationFrame(() => { arc.style.strokeDashoffset = C * (1 - (h.top1_accuracy || 0)); }));
+
+    scored[res.trip_id] = pct(h.top1_accuracy);
+    const btn = document.querySelector(`.trip[data-id="${res.trip_id}"] .sub`);
+    if (btn) { btn.textContent = "Top-1 " + scored[res.trip_id]; btn.classList.add("scored"); }
+
+    $("cmp").innerHTML = [
+      ["Top-1 accuracy", h.top1_accuracy, c.top1_accuracy],
+      ["Macro F1 (arc-level)", h.macro_f1, c.macro_f1],
+      ["Route continuity", h.route_continuity, c.route_continuity],
+    ].map(([name, hv, cv]) => {
+      const d = (hv - cv) * 100;
+      return `<div>
+        <div class="cmp-head"><span>${name}</span><span class="delta ${d < 0 ? "neg" : ""}">${d >= 0 ? "+" : "−"}${Math.abs(d).toFixed(1)} pts</span></div>
+        <div class="bar"><span class="track"><span class="fill hmm" data-w="${hv * 100}"></span></span><span class="v">${pct(hv)}</span></div>
+        <div class="bar"><span class="track"><span class="fill clf" data-w="${cv * 100}"></span></span><span class="v">${pct(cv)}</span></div>
+      </div>`;
+    }).join("");
+    requestAnimationFrame(() => requestAnimationFrame(() =>
+      document.querySelectorAll(".fill").forEach((f) => { f.style.width = f.dataset.w + "%"; })));
+    $("note").textContent = `Scored on ${m.n_scored_observations.toLocaleString()} of ${m.n_observations.toLocaleString()} GPS points` +
+      (m.n_excluded_unreliable_labels ? `; ${m.n_excluded_unreliable_labels} points with an unreliable reference were left out.` : ".") +
+      " Reference routes stay on Laptop 1; this page only receives the prediction and summary scores.";
+  } else {
+    $("g-top1").textContent = "n/a"; $("g-f1").textContent = "n/a"; $("g-cont").textContent = "n/a";
+    arc.style.strokeDashoffset = C; $("cmp").innerHTML = "";
+    $("note").textContent = `No scores for this trip: ${m.reason || "the backend returned none"}.`;
+  }
+
+  const t = res.timing;
+  const parts = [
+    ["Road graph", t.load_graph_s, "#475569"], ["Candidate roads", t.candidates_s, "#94a3b8"],
+    ["ML scoring", t.scoring_s, "#cbd5e1"], ["HMM decoding", t.decoding_s, "#818cf8"],
+  ];
+  const sum = parts.reduce((a, p) => a + p[1], 0) || 1;
+  $("timing").innerHTML = parts.map(([n, v, col]) => `<span title="${n}" style="flex:${Math.max(v / sum, 0.01)};background:${col}"></span>`).join("");
+  $("tlegend").innerHTML = parts.map(([n, v, col]) => `<span><i style="background:${col}"></i>${n}</span><span class="n">${v.toFixed(3)} s</span>`).join("") +
+    `<span class="total"><span>Whole request</span><span>${res.request_s.toFixed(2)} s</span></span>`;
+
+  $("results").classList.add("on");
+  $("results").scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "start" });
+}
+
+function esc(s) { return String(s).replace(/[&<>"]/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[ch])); }
+
+/* ================================================================ start-up: which backend address to use */
+(async function init() {
+  // Priority: ?api=... in the page URL, then PATHSNAP_API_URL given to serve.py,
+  // then the address last used in this browser, then config.yaml (ui.api_base_url).
+  let cfg = { api_base_url: "http://127.0.0.1:8000", source: "default" };
+  try { cfg = await (await fetch("config.json")).json(); } catch (e) { /* page opened without serve.py */ }
+  let stored = null;
+  try { stored = localStorage.getItem("pathsnap_api"); } catch (e) { /* storage unavailable */ }
+  $("api-url").value = new URLSearchParams(location.search).get("api")
+    || (cfg.source === "env" ? cfg.api_base_url : null) || stored || cfg.api_base_url;
+  $("connect").addEventListener("click", connect);
+  $("api-url").addEventListener("keydown", (e) => { if (e.key === "Enter") connect(); });
+  $("go").addEventListener("click", matchRoute);
+  connect();
+})();
+</script>
+</body>
+</html>

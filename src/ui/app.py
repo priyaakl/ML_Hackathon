@@ -167,13 +167,13 @@ k1, k2, k3, k4 = st.columns(4)
 if m.get("available"):
     k1.metric("Top-1 accuracy (HMM)", pct(hmm["top1_accuracy"]),
               delta=f"{(hmm['top1_accuracy'] - clf['top1_accuracy']) * 100:+.1f} pts vs classifier-only")
-    k2.metric("Macro F1 (HMM)", pct(hmm["macro_f1"]),
+    k2.metric("Macro F1, arc-level (HMM)", pct(hmm["macro_f1"]),
               delta=f"{(hmm['macro_f1'] - clf['macro_f1']) * 100:+.1f} pts vs classifier-only")
     k3.metric("Route continuity (HMM)", pct(hmm["route_continuity"]),
               delta=f"{(hmm['route_continuity'] - clf['route_continuity']) * 100:+.1f} pts vs classifier-only")
 else:
     k1.metric("Top-1 accuracy", "n/a")
-    k2.metric("Macro F1", "n/a")
+    k2.metric("Macro F1, arc-level", "n/a")
     k3.metric("Route continuity", "n/a")
     st.info(f"Metrics unavailable: {m.get('reason', 'not returned by the API')}")
 k4.metric("Server processing time", f"{res['request_s']:.2f} s", delta=f"{res['n_observations']:,} GPS points",
@@ -191,7 +191,7 @@ with info_col:
     st.markdown("**Classifier-only vs HMM + Viterbi**")
     if m.get("available"):
         st.table({
-            "Metric": ["Top-1 accuracy", "Macro F1", "Route continuity"],
+            "Metric": ["Top-1 accuracy", "Macro F1 (arc-level)", "Route continuity"],
             "Classifier-only": [pct(clf["top1_accuracy"]), pct(clf["macro_f1"]), pct(clf["route_continuity"])],
             "HMM + Viterbi": [pct(hmm["top1_accuracy"]), pct(hmm["macro_f1"]), pct(hmm["route_continuity"])],
         })
