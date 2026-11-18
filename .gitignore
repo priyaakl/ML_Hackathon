@@ -1,0 +1,28 @@
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ipynb_checkpoints/
+
+# ---------- Virtual environment ----------
+.venv/
+venv/
+
+# ---------- Secrets / local config ----------
+.env
+.env.*
+.streamlit/secrets.toml
+
+# ---------- Raw dataset (professor's data, never commit) ----------
+data/raw/*
+!data/raw/.gitkeep
+Student folder/
+*.zip
+
+# ---------- macOS / editor ----------
+.DS_Store
+.vscode/
+
+# ---------- Logs ----------
+*.log
