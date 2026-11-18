@@ -1,0 +1,3 @@
+partition,trips,gps_points,median_points_per_trip,missing_values,non_monotonic_time_trips,pct_steps_exactly_1s,steps_gt_60s,trips_with_gt_60s,longest_gap_s,trips_with_route_jumps,min_route_connected_pct,median_pct_arcs_two_way,trips_with_disconnected_network,median_largest_component_pct
+train,80,208417,1529.0,0,0,96.5,69,22,153064.0,10,98.13,95.15,79,98.1
+student_test,10,19160,1420.0,0,0,98.62,1,1,210.0,1,99.73,93.25,10,97.05
